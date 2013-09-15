@@ -2,7 +2,7 @@ package com.a9ski.gerrit.model;
 
 import java.util.Comparator;
 
-public class UserComparator implements Comparator<User> {
+public class UserSortComparator implements Comparator<User> {
 
 	public static enum Field {
 		ID, FIRSTNAME, LASTNAME, EMAIL;
@@ -23,7 +23,7 @@ public class UserComparator implements Comparator<User> {
 	}
 	
 	@Override
-	public int compare(User u1, User u2) {
+	public int compare(final User u1, final User u2) {
 		int res = 0;
 		if (u1 != null && u2 != null) {
 			switch(field) {

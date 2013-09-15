@@ -9,11 +9,12 @@
  */
 package com.a9ski.gerrit;
 
+import com.a9ski.gerrit.serlvets.UserServiceServlet;
 import com.google.inject.servlet.ServletModule;
 
 class HttpModule extends ServletModule {
 	@Override
 	protected void configureServlets() {
-		// TODO
+		serve("/userManagement*").with(UserServiceServlet.class);
 	}
 }
