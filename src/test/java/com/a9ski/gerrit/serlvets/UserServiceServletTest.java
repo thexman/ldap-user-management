@@ -16,7 +16,7 @@ public class UserServiceServletTest {
 	
 	@Before
 	public void setup() {
-		servlet = new UserServiceServlet();
+		servlet = new UserServiceServlet(null); // TODO: NPE fix me
 	}
 	
 	@Test

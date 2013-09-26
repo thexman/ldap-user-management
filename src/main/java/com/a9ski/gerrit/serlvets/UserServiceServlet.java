@@ -2,10 +2,9 @@ package com.a9ski.gerrit.serlvets;
 
 import java.io.IOException;
 import java.io.OutputStream;
-import java.io.PrintWriter;
+import java.net.URI;
+import java.net.URISyntaxException;
 import java.nio.charset.Charset;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
@@ -15,17 +14,24 @@ import javax.servlet.http.HttpServletRequest;
 import javax.servlet.http.HttpServletResponse;
 
 import org.apache.commons.io.IOUtils;
+import org.apache.directory.api.ldap.model.cursor.CursorException;
+import org.apache.directory.api.ldap.model.exception.LdapException;
+import org.eclipse.jgit.lib.Config;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.a9ski.gerrit.exceptions.PluginException;
+import com.a9ski.gerrit.exceptions.PluginRuntimeException;
 import com.a9ski.gerrit.ldap.LdapClient;
+import com.a9ski.gerrit.ldap.exceptions.InvalidPasswordException;
 import com.a9ski.gerrit.model.User;
 import com.a9ski.gerrit.model.UserSortComparator;
-import com.google.gerrit.extensions.annotations.Export;
+import com.a9ski.gerrit.utils.CryptoUtils;
+import com.google.gerrit.server.config.GerritServerConfig;
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonPrimitive;
+import com.google.inject.Inject;
 import com.google.inject.Singleton;
 @Singleton
 public class UserServiceServlet extends HttpServlet {
@@ -39,11 +45,28 @@ public class UserServiceServlet extends HttpServlet {
 	
 	private final Charset charset;
 	
-	private LdapClient ldap = new LdapClient();
+//	@Inject
+//	private com.google.gerrit.server.config.PluginConfigFactory cfg;	
 	
-	public UserServiceServlet() {
-		charset = Charset.forName("UTF-8");
-	}
+	private LdapClient ldap;
+	
+	
+	@Inject
+	public UserServiceServlet(@GerritServerConfig final Config config) {
+		charset = Charset.forName("UTF-8");	
+		final String accountBase = config.getString("ldap", null, "accountBase");
+		final String groupBase = config.getString("ldap", null, "groupBase");
+		final String server = config.getString("ldap", null, "server");
+		final String login = config.getString("ldap", null, "username");
+		final String password = config.getString("ldap", null, "password");
+		
+		try {
+			ldap = new LdapClient(new URI(server), login, password, accountBase, groupBase);
+		} catch (final URISyntaxException ex) {
+			throw new PluginRuntimeException(String.format("Cannot connect to LDAP server %s", server), ex);
+		}
+	};
+	
 	
 	@Override
 	protected void doGet(HttpServletRequest req, HttpServletResponse resp) throws ServletException, IOException {
@@ -55,14 +78,14 @@ public class UserServiceServlet extends HttpServlet {
 		handleRequest(req, resp);
 	}
 	
-	private List<User> getUsers() {
-		//return ldap.getUsers();
-		final List<User> users = new ArrayList<User>();
-		for(int i = 0; i < 50; i++) {
-			String s = String.valueOf(i);
-			users.add(new User("id" + s, "John" + s, "Doe", "john" +s + "@email.rar", "xxx"));
-		}
-		return users;
+	private List<User> getUsers() throws LdapException, CursorException {
+		return ldap.getUsers();
+//		final List<User> users = new ArrayList<User>();
+//		for(int i = 0; i < 50; i++) {
+//			String s = String.valueOf(i);
+//			users.add(new User("id" + s, "John" + s, "Doe", "john" + s + "@email.rar", "xxx"));
+//		}
+//		return users;
 	}
 	
 	private int parseIntParam(final HttpServletRequest request, final String paramName, final int defaultValue) {
@@ -84,72 +107,98 @@ public class UserServiceServlet extends HttpServlet {
 		return intParam;
 	}
 
-	private void handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException {
-		/*	  $page = $this->input->post('page');
-		      $limit = $this->input->post('rows'); // get how many rows we want to have into the grid
-		      $sidx = $this->input->post('sidx'); // get index row - i.e. user click to sort
-		      $sord = $this->input->post('sord'); // get the direction
-	    */
+	private void handleRequest(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {		
+		// method could be null
+		final String method = request.getParameter("method");
 		
-		int rowsPerPage = parseRowsPerPage(request);
-		
-		final List<User> users = getUsers();
-		Collections.sort(users, new UserSortComparator());
-		final int pagesCount = users.size() / rowsPerPage;
-		final int page = parsePage(request, pagesCount);
-		
-		final JsonObject json = new JsonObject();
-		json.addProperty("total", pagesCount); // total number of pages
-		json.addProperty("records", users.size()); // total number of users
-		json.addProperty("page", page); // current page
-		
-		final JsonArray rows = new JsonArray();
-		
-		int startI = page * rowsPerPage;
-		int endI = Math.min(startI + rowsPerPage, users.size());
-		for(int i = startI; i < endI; i++) {			
-			final JsonObject rowObj = toJson(users.get(i));
-			rows.add(rowObj);
+		if ("changePassword".equals(method)) {
+			changePassword(request, response);
+		} else {
+			listUsers(request, response);
 		}
-		
-		json.add("rows", rows);
-		
-		writeResponse(response, json);
-		/*
-		 * {
-  "page": "1",
-  "records": "10",
-  "total": "2",
-  "rows": [
-      {
-          "id": 3,
-          "cell": [
-              3,
-              "cell 1",
-              "2010-09-29T19:05:32",
-              "2010-09-29T20:15:56",
-              "hurrf",
-              0 
-          ] 
-      },
-      {
-          "id": 1,
-          "cell": [
-              1,
-              "teaasdfasdf",
-              "2010-09-28T21:49:21",
-              "2010-09-28T21:49:21",
-              "aefasdfsadf",
-              1 
-          ] 
-      } 
-  ]
-}
-		 */
-		
-		
-		
 	}
+
+
+	private void changePassword(HttpServletRequest request, HttpServletResponse response) throws ServletException, IOException {
+		final String userId = request.getParameter("userId");		
+		final String oldPassword = request.getParameter("oldPassword");
+		final String newPassword = request.getParameter("newPassword");
+		if (oldPassword == null) {
+			writeResponse(response, createStatusJson(false, "Missing old password"));
+		} else if (newPassword == null) {
+			writeResponse(response, createStatusJson(false, "Missing new password"));
+		} else if (newPassword.length() < 4) {
+			writeResponse(response, createStatusJson(false, "New password is too short"));
+		} else {
+			changePassword(response, userId, CryptoUtils.encryptPassword(oldPassword), CryptoUtils.encryptPassword(newPassword));
+		}
+	}
+
+
+	private void changePassword(HttpServletResponse response, final String userId, final String oldPassword, final String newPassword) throws IOException, ServletException {
+		try {
+			ldap.changePassword(userId, oldPassword, newPassword);
+			writeResponse(response, createStatusJson(true, String.format("Successfully changes password for user '%s'", userId)));		
+		} catch (final LdapException ex) {			
+			throw new ServletException(String.format("Error changin password of users %s", userId), ex);
+		} catch (final CursorException ex) {
+			throw new ServletException(String.format("Error changin password of users %s", userId), ex);
+		} catch (final PluginException ex) {
+			writeResponse(response, createStatusJson(false, ex.getMessage()));
+		}
+	}
+	
+	private JsonObject createStatusJson(boolean success, String description) {
+		final JsonObject json = new JsonObject();
+		json.addProperty("success", success);
+		json.addProperty("description", description);
+		return json;
+	}
+
+
+	private void listUsers(HttpServletRequest request, HttpServletResponse response) throws IOException, ServletException {
+		try {
+			int rowsPerPage = parseRowsPerPage(request);
+			
+			final List<User> users = getUsers();
+			Collections.sort(users, new UserSortComparator());			
+			final int pagesCount = users.size() / rowsPerPage + sgn(users.size() % rowsPerPage);
+			final int page = parsePage(request, pagesCount);
+			
+			final JsonObject json = new JsonObject();
+			json.addProperty("total", pagesCount); // total number of pages
+			json.addProperty("records", users.size()); // total number of users
+			json.addProperty("page", page); // current page
+			
+			final JsonArray rows = new JsonArray();
+			
+			int startI = (page - 1) * rowsPerPage;
+			int endI = Math.min(startI + rowsPerPage, users.size());
+			for(int i = startI; i < endI; i++) {			
+				final JsonObject rowObj = toJson(users.get(i));
+				rows.add(rowObj);
+			}
+			
+			json.add("rows", rows);
+			
+			writeResponse(response, json);
+		} catch (final LdapException ex) {			
+			throw new ServletException("Error processing users list", ex);
+		} catch (final CursorException ex) {
+			throw new ServletException("Error processing users list", ex);
+		}
+	}
+
+	private int sgn(int i) {
+		if (i > 0) {
+			return 1;
+		} else if (i < 0) {
+			return -1;
+		} else {
+			return 0;
+		}
+	}
+
 
 	private int parseRowsPerPage(HttpServletRequest request) {
 		int rowsPerPage = parseIntParam(request, "rows", 10);
@@ -202,6 +251,7 @@ public class UserServiceServlet extends HttpServlet {
 		cells.add(new JsonPrimitive(user.getFirstName()));
 		cells.add(new JsonPrimitive(user.getLastName()));
 		cells.add(new JsonPrimitive(user.getEmail()));
+		cells.add(new JsonPrimitive(user.getId()));
 		rowObj.add("cell", cells);
 		return rowObj;
 	}
